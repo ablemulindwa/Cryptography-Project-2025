@@ -2,6 +2,18 @@
 import {webcrypto} from 'crypto';
 const subtle = webcrypto.subtle;
 
+/********* Constants ********/
+
+const PBKDF2_ITERATIONS = 100000; // number of iterations for PBKDF2 algorithm
+const MAX_PASSWORD_LENGTH = 64;   // we can assume no password is longer than this many characters
+const SALT_LENGTH = 16;
+
+//Two variables, for use with the getKeys() function.
+// Master password. A sample. Might need to prompt the user in the final implementation.
+const master_password = "myultimatemasterpassword";
+// Generate a salt. Might need to store it later.
+const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
+
 //My working Key Value Store. Initializes a default key value store to be used to run experiments on.
 //Domain names
 let domain_name = ["mozilla.org", "strathmore.edu", "amazon.com", "google.com", "walmart.com"];
@@ -27,6 +39,72 @@ let bool = true;
 
 //mp.set(key1,value2);
 
+//DONE: Function to derive keys for both encryption and decryption.
+async function getKeys(password, salt, iterations){
+    //Encode the master password given by user.
+    const encodedMasterPassword = new TextEncoder().encode(password);
+    
+    //Import the password into a Cryptokey
+    const masterKey = await crypto.subtle.importKey(
+        'raw',
+        encodedMasterPassword,
+        { name: 'PBKDF2' },
+        false,
+        ['deriveKey']
+    );
+
+    //Derive the master key k using the Cryptokey
+    const k = await crypto.subtle.deriveKey(
+    {
+        name: "PBKDF2",
+        salt: salt,
+        iterations: iterations,
+        hash: "SHA-256",
+    },
+        masterKey,
+        { name: "HMAC", hash: "SHA-256" },
+        true,
+        ["sign", "verify"]
+    );
+
+    //Get two subkeys from master key k. To MAC the domain names in the KVS. As well as encrypt the password.
+    //Derive HMAC sub-key for Domain MAC.
+    const hmacKeyMaterial = await subtle.sign(
+        "HMAC",
+        k,
+        new TextEncoder().encode("MY_HMAC_KEY")
+    );
+
+    const hmacKey = await subtle.importKey(
+        "raw",
+        hmacKeyMaterial,
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign", "verify"]
+    );
+
+    //Derive AES sub-key for eventual AES-GCM encryption
+    const aesKeyMaterial = await subtle.sign(
+        "HMAC",
+        k,
+        new TextEncoder().encode("MY_AES_KEY")
+    );
+
+    // Ensure that AES-GCM is exactly 256 bits
+    const aesKeyM = new Uint8Array(aesKeyMaterial).slice(0, 32);
+    const aesKey = await subtle.importKey(
+        "raw",
+        aesKeyM,
+        "AES-GCM",
+        false,
+        ["encrypt", "decrypt"]
+    );
+
+    //Return the keys to be used for encryption/decryption
+    return { hmacKey, aesKey };
+}
+
+//TO-DO: Combine the set function below with the get Keys function above it. Maybe find a way to save the keys as well?
 async function set(key, value){
 
     //Does the given key exist?
@@ -35,7 +113,7 @@ async function set(key, value){
         //TO-DO: Step 1: Hash the domain name
         
         //Step 2: Encrypt password and insert new record into the system.
-        let encrypted_password = await p_encrypt(value);
+        let encrypted_password = await pass_encrypt(value);
         //console.log(encrypted_password);
         
         mp.set(key, encrypted_password);
@@ -79,6 +157,7 @@ function check(key){
 }
 
 //DONE: Update. An outside function that updates the password/value in the key-value pair if a match is found with the domain.
+//TO-DO: Consider adding a dependency to the centralized getKeys() function in order to facilitate better, more secure and accurate updating.
 function update(key, value){
     //Iterates over each value.
     for(const yek of mp.keys()){
@@ -94,8 +173,8 @@ function update(key, value){
     }
 }
 
-//TO-DO: Encrypt. An outside(?) function that encrypts the value of the password.
-async function p_encrypt(value){
+//TO-DO: Encrypt. An outside function that encrypts the value of the password. Combine this function with the getKeys() function.
+async function pass_encrypt(value){
     //Preparing the Data
     const pass_encoded = new TextEncoder().encode(value);
 
@@ -127,3 +206,5 @@ async function p_encrypt(value){
 
     return pass_cipher;
 }
+
+//TO-DO: Domain Hash. An outside function dedicated specifically to getting the HMAC of the domain value
