@@ -2,7 +2,8 @@
 
 //My Subtle Crypto imports
 const { stringToBuffer, bufferToString, encodeBuffer, decodeBuffer, getRandomBytes } = require("./lib");
-const { subtle } = require('crypto').webcrypto;
+const { webcrypto } = require('crypto');
+const { subtle } = webcrypto;
 
 /********* Constants ********/
 
@@ -50,9 +51,9 @@ class Keychain {
      */
     async _hashDomain(domain) {
         const normalizedDomain = domain.toLowerCase().trim();
-        const domainBuffer = Keychain.stringToBuffer(normalizedDomain);
+        const domainBuffer = stringToBuffer(normalizedDomain);
         const hmacResult = await subtle.sign("HMAC", this.secrets.hmacKey, domainBuffer);
-        return Keychain.bufferToBase64(hmacResult);
+        return encodeBuffer(hmacResult);
     }
 
     /**
@@ -74,14 +75,14 @@ class Keychain {
 
         // Pad password to hide actual length
         const paddedPassword = password.padEnd(MAX_PASSWORD_LENGTH, '\0');
-        const passwordBuffer = Keychain.stringToBuffer(paddedPassword);
+        const passwordBuffer = stringToBuffer(paddedPassword);
 
         // Use normalized domain as Additional Authenticated Data (AAD) for swap attack protection
         const normalizedDomain = domain.toLowerCase().trim();
-        const domainBuffer = Keychain.stringToBuffer(normalizedDomain);
+        const domainBuffer = stringToBuffer(normalizedDomain);
 
         // Generate a unique random IV for this encryption
-        const iv = Keychain.getRandomBytes(IV_LENGTH);
+        const iv = getRandomBytes(IV_LENGTH);
 
         // Encrypt using AES-GCM with domain binding (AAD)
         const encrypted = await subtle.encrypt(
@@ -95,14 +96,14 @@ class Keychain {
         combined.set(iv, 0);
         combined.set(new Uint8Array(encrypted), IV_LENGTH);
 
-        return Keychain.bufferToBase64(combined);
+        return encodeBuffer(combined);
     }
 
     /**
      * Decrypts a password using AES-GCM with domain verification
      */
     async _decryptPassword(encryptedData, domain) {
-        const combined = Keychain.base64ToBuffer(encryptedData);
+        const combined = decodeBuffer(encryptedData);
 
         if (combined.length < IV_LENGTH + GCM_TAG_LENGTH) {
             throw new Error("Encrypted data is too short to be valid.");
@@ -113,7 +114,7 @@ class Keychain {
 
         // Prepare domain for AAD verification
         const normalizedDomain = domain.toLowerCase().trim();
-        const domainBuffer = Keychain.stringToBuffer(normalizedDomain);
+        const domainBuffer = stringToBuffer(normalizedDomain);
 
         // Decrypt, this will fail if the AAD (domain) or key is incorrect
         const decrypted = await subtle.decrypt(
@@ -123,7 +124,7 @@ class Keychain {
         );
 
         // Convert back to string and remove null padding
-        const paddedPassword = Keychain.bufferToString(decrypted);
+        const paddedPassword = bufferToString(decrypted);
         return paddedPassword.replace(/\0+$/, '');
     }
 
@@ -133,7 +134,7 @@ class Keychain {
      */
     static async _deriveKeys(password, salt) {
         const passwordKey = await subtle.importKey(
-            "raw", Keychain.stringToBuffer(password), "PBKDF2", false, ["deriveKey"]
+            "raw", stringToBuffer(password), "PBKDF2", false, ["deriveKey"]
         );
 
         // Derive a master key using PBKDF2
@@ -145,8 +146,8 @@ class Keychain {
         );
 
         // Use HMAC as a PRF to derive domain-hashing and password-encrypting keys
-        const hmacKeyMaterial = await subtle.sign("HMAC", masterKey, Keychain.stringToBuffer("HMAC_KEY"));
-        const aesKeyMaterial = await subtle.sign("HMAC", masterKey, Keychain.stringToBuffer("AES_KEY"));
+        const hmacKeyMaterial = await subtle.sign("HMAC", masterKey, stringToBuffer("HMAC_KEY"));
+        const aesKeyMaterial = await subtle.sign("HMAC", masterKey, stringToBuffer("AES_KEY"));
 
         const hmacKey = await subtle.importKey(
             "raw", hmacKeyMaterial, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
@@ -192,15 +193,15 @@ class Keychain {
 
         // Verify integrity if checksum is provided
         if (trustedDataCheck) {
-            const computedHashBuffer = await subtle.digest("SHA-256", Keychain.stringToBuffer(repr));
-            const computedChecksum = Keychain.bufferToBase64(computedHashBuffer);
+            const computedHashBuffer = await subtle.digest("SHA-256", stringToBuffer(repr));
+            const computedChecksum = encodeBuffer(computedHashBuffer);
             if (computedChecksum !== trustedDataCheck) {
                 throw new Error("Integrity check failed - data may have been tampered with");
             }
         }
 
         const parsedData = JSON.parse(repr);
-        const salt = Keychain.base64ToBuffer(parsedData.salt);
+        const salt = decodeBuffer(parsedData.salt);
 
         // Re-derive keys to decrypt. If password is wrong, this will lead to decryption
         // errors later, which is the expected failure mode.
@@ -216,13 +217,13 @@ class Keychain {
         this._validateInitialization();
 
         const dumpData = {
-            salt: Keychain.bufferToBase64(this.data.salt),
+            salt: encodeBuffer(this.data.salt),
             kvs: this.data.kvs
         };
 
         const serializedData = JSON.stringify(dumpData);
-        const hashBuffer = await subtle.digest("SHA-256", Keychain.stringToBuffer(serializedData));
-        const checksumString = Keychain.bufferToBase64(hashBuffer);
+        const hashBuffer = await subtle.digest("SHA-256", stringToBuffer(serializedData));
+        const checksumString = encodeBuffer(hashBuffer);
 
         return [serializedData, checksumString];
     }
